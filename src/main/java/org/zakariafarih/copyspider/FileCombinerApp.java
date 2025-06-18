@@ -351,40 +351,129 @@ public class FileCombinerApp extends Application {
     }
 
     /**
-     * Opens a DirectoryChooser to select multiple folders and adds their files to the table.
+     * Opens a custom folder selection dialog that supports multiple folder selection with Ctrl+click.
      */
     private void selectFolders(Stage stage) {
-        List<File> selectedFolders = new ArrayList<>();
-        DirectoryChooser directoryChooser = new DirectoryChooser();
-        directoryChooser.setTitle("Select Folders");
-        File selectedFolder = directoryChooser.showDialog(stage);
-        if (selectedFolder != null) {
-            selectedFolders.add(selectedFolder);
-        }
+        // Create a custom dialog for folder selection
+        Dialog<List<File>> dialog = new Dialog<>();
+        dialog.setTitle("Select Folders");
+        dialog.setHeaderText("Select multiple folders using Ctrl+click");
+        dialog.getDialogPane().setPrefSize(800, 500);
 
-        // Allow multiple folder selection by prompting the user
-        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-        alert.setTitle("Select More Folders");
-        alert.setHeaderText(null);
-        alert.setContentText("Do you want to select another folder?");
+        // Set the button types
+        ButtonType selectButtonType = ButtonType.OK;
+        ButtonType cancelButtonType = ButtonType.CANCEL;
+        dialog.getDialogPane().getButtonTypes().addAll(selectButtonType, cancelButtonType);
 
-        while (true) {
-            Optional<ButtonType> result = alert.showAndWait();
-            if (result.isPresent() && result.get() == ButtonType.OK) {
-                File nextFolder = directoryChooser.showDialog(stage);
-                if (nextFolder != null) {
-                    selectedFolders.add(nextFolder);
-                } else {
-                    break;
+        // Create the main layout
+        BorderPane pane = new BorderPane();
+
+        // Current path indicator
+        TextField currentPathField = new TextField();
+        currentPathField.setEditable(false);
+
+        // Up button
+        Button upButton = new Button("⬆ Up");
+
+        // Path navigation controls
+        HBox navigationBox = new HBox(10, new Label("Location:"), currentPathField, upButton);
+        navigationBox.setPadding(new Insets(5));
+        navigationBox.setAlignment(Pos.CENTER_LEFT);
+        HBox.setHgrow(currentPathField, Priority.ALWAYS);
+
+        // File system list view (using String representations instead of custom objects)
+        ListView<String> folderListView = new ListView<>();
+        folderListView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
+
+        // Set up the main layout
+        pane.setTop(navigationBox);
+        pane.setCenter(folderListView);
+
+        dialog.getDialogPane().setContent(pane);
+
+        // Map to store the mapping between display strings and actual File objects
+        Map<String, File> folderMap = new HashMap<>();
+
+        // Keep track of the current directory
+        final File[] currentDirectory = new File[1];
+        currentDirectory[0] = new File(System.getProperty("user.home"));
+
+        // Function to update the folder list view
+        Runnable updateFolderList = () -> {
+            folderListView.getItems().clear();
+            folderMap.clear();
+            currentPathField.setText(currentDirectory[0].getAbsolutePath());
+
+            File[] files = currentDirectory[0].listFiles();
+            if (files != null) {
+                List<String> items = new ArrayList<>();
+
+                // Add directories
+                for (File file : files) {
+                    if (file.isDirectory() && !file.isHidden() && file.canRead()) {
+                        String displayName = "📁 " + file.getName();
+                        items.add(displayName);
+                        folderMap.put(displayName, file);
+                    }
                 }
-            } else {
-                break;
-            }
-        }
 
-        for (File folder : selectedFolders) {
-            addFolderItem(folder);
-        }
+                // Sort by name
+                Collections.sort(items);
+
+                folderListView.getItems().addAll(items);
+            }
+        };
+
+        // Initialize the folder list
+        updateFolderList.run();
+
+        // Handle up button click
+        upButton.setOnAction(e -> {
+            File parent = currentDirectory[0].getParentFile();
+            if (parent != null) {
+                currentDirectory[0] = parent;
+                updateFolderList.run();
+            }
+        });
+
+        // Handle double-click on a folder to navigate into it
+        folderListView.setOnMouseClicked(event -> {
+            if (event.getClickCount() == 2) {
+                String selectedItem = folderListView.getSelectionModel().getSelectedItem();
+                if (selectedItem != null) {
+                    File selectedFile = folderMap.get(selectedItem);
+                    if (selectedFile != null && selectedFile.isDirectory()) {
+                        currentDirectory[0] = selectedFile;
+                        updateFolderList.run();
+                    }
+                }
+            }
+        });
+
+        // Set the result converter
+        dialog.setResultConverter(dialogButton -> {
+            if (dialogButton == selectButtonType) {
+                List<File> selectedFolders = new ArrayList<>();
+                for (String item : folderListView.getSelectionModel().getSelectedItems()) {
+                    File folder = folderMap.get(item);
+                    if (folder != null && folder.isDirectory()) {
+                        selectedFolders.add(folder);
+                    }
+                }
+                return selectedFolders;
+            }
+            return null;
+        });
+
+        // Show the dialog and process the result
+        Optional<List<File>> result = dialog.showAndWait();
+        result.ifPresent(folders -> {
+            if (!folders.isEmpty()) {
+                folders.forEach(this::addFolderItem);
+            } else {
+                showAlert(Alert.AlertType.INFORMATION, "No Selection", "No folders were selected.");
+            }
+        });
     }
 
     /**
